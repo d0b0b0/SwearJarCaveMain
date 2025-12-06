@@ -358,6 +358,12 @@ async def swear_top(ctx: commands.Context, limit: int = 10):
     if ctx.guild is None:
         return await ctx.send("This command can only be used in a server.")
 
+    # защита от странных значений
+    if limit < 1:
+        limit = 10
+    if limit > 25:
+        limit = 25
+
     guild_stats = get_guild_stats(ctx.guild.id)
     users = guild_stats["users"]
 
@@ -370,13 +376,63 @@ async def swear_top(ctx: commands.Context, limit: int = 10):
         reverse=True
     )[:limit]
 
+    # готовим красивые строки для описания
+    medals = {
+        1: "🥇",
+        2: "🥈",
+        3: "🥉"
+    }
+
     lines = []
     for i, (uid, info) in enumerate(sorted_users, start=1):
         member = ctx.guild.get_member(int(uid))
-        name = member.display_name if member else info["name"]
-        lines.append(f"**{i}. {name}** — {info['count']}")
+        # если юзер всё ещё на сервере — упоминаем его
+        if member:
+            name = member.mention
+        else:
+            # иначе используем сохранённое имя
+            name = info["name"]
 
-    await ctx.send("\n".join(lines))
+        medal = medals.get(i, "🔹")
+        count = info["count"]
+
+        # можно чуть подсветить топовых и больших матерщинников
+        lines.append(f"{medal} **{i}. {name}** — `{count}` swear(s)")
+
+    description = "\n".join(lines)
+
+    # делаем embed
+    embed = discord.Embed(
+        title=f"🏆 Swear leaderboard — {ctx.guild.name}",
+        description=description,
+        color=0xFF5C5C
+    )
+
+    total_swears = guild_stats.get("total", 0)
+    embed.add_field(
+        name="📊 Total swears on this server",
+        value=f"**{total_swears}**",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🤖 Tip",
+        value="Use `!swearme` to check your own stats.\nUse `/listswears` to see tracked words.",
+        inline=False
+    )
+
+    # красивая иконка сервера, если есть
+    try:
+        if ctx.guild.icon:
+            embed.set_thumbnail(url=ctx.guild.icon.url)
+    except Exception:
+        pass
+
+    embed.set_footer(
+        text=f"SwearJarCove — tracking {len(SWEAR_WORDS)} swear words globally"
+    )
+
+    await ctx.send(embed=embed)
 
 
 @bot.command(name="sweartotal")
