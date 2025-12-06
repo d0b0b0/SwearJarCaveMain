@@ -8,7 +8,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 # ==============================
-# 1. Load token
+# 1. Load token from .env
 # ==============================
 
 load_dotenv()
@@ -16,7 +16,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 print("TOKEN:", repr(TOKEN))
 
 if not TOKEN:
-    raise SystemExit("❌ Bot token not found! Check your .env file (DISCORD_TOKEN).")
+    raise SystemExit("❌ Bot token not found! Check your .env (DISCORD_TOKEN).")
 
 
 # ==============================
@@ -24,7 +24,7 @@ if not TOKEN:
 # ==============================
 
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = True   # required to read message text
 intents.members = True
 
 
@@ -32,15 +32,19 @@ intents.members = True
 # 3. Bot instance
 # ==============================
 
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents,
+    help_command=None
+)
 
 
 # ==============================
-# 4. Files and default data
+# 4. Files & default data
 # ==============================
 
-STATS_FILE = "swear_stats.json"
-WORDS_FILE = "swear_words.json"
+STATS_FILE = "swear_stats.json"   # per-guild stats
+WORDS_FILE = "swear_words.json"   # global swear words
 
 DEFAULT_SWEARS = [
     # English
@@ -53,6 +57,7 @@ DEFAULT_SWEARS = [
 
 
 def load_json(path: str, default: dict) -> dict:
+    """Load JSON from file or return default."""
     if not os.path.exists(path):
         return default
     try:
@@ -67,12 +72,11 @@ def save_json(path: str, data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# Глобальные структуры:
 # stats_data = { "guilds": { guild_id: { "users": {...}, "total": int } } }
-# words_data = { "guilds": { guild_id: { "words": [ ... ] } } }
-
 stats_data = load_json(STATS_FILE, {"guilds": {}})
-words_data = load_json(WORDS_FILE, {"guilds": {}})
+if "guilds" not in stats_data:
+    stats_data = {"guilds": {}}
+    save_json(STATS_FILE, stats_data)
 
 
 def get_guild_stats(guild_id: int) -> dict:
@@ -87,24 +91,49 @@ def get_guild_stats(guild_id: int) -> dict:
     return stats_data["guilds"][gid]
 
 
-def get_guild_words(guild_id: int) -> set:
-    """Return set of swear words for this guild, create with defaults if missing."""
-    gid = str(guild_id)
-    if gid not in words_data["guilds"]:
-        words_data["guilds"][gid] = {
-            "words": DEFAULT_SWEARS.copy()
-        }
-        save_json(WORDS_FILE, words_data)
+# ============ global swear words ============
 
-    words_list = words_data["guilds"][gid]["words"]
-    return {w.lower() for w in words_list}
+def load_swears() -> dict:
+    """
+    Global swear words list.
+
+    File format (new):
+    { "words": [ ... ] }
+
+    If old format with "guilds" is detected, it will be merged.
+    """
+    if not os.path.exists(WORDS_FILE):
+        return {"words": DEFAULT_SWEARS.copy()}
+
+    try:
+        with open(WORDS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {"words": DEFAULT_SWEARS.copy()}
+
+    # Old format: { "guilds": { ... } }
+    if "guilds" in data and "words" not in data:
+        merged = set()
+        for g in data["guilds"].values():
+            merged.update([w.lower() for w in g.get("words", [])])
+        if not merged:
+            merged = set(DEFAULT_SWEARS)
+        return {"words": sorted(merged)}
+
+    # New format
+    if "words" in data:
+        return data
+
+    return {"words": DEFAULT_SWEARS.copy()}
 
 
-def set_guild_words(guild_id: int, words: list[str]):
-    """Update word list for guild and save."""
-    gid = str(guild_id)
-    words_data["guilds"][gid] = {"words": words}
-    save_json(WORDS_FILE, words_data)
+def save_swears(swears_dict: dict):
+    with open(WORDS_FILE, "w", encoding="utf-8") as f:
+        json.dump(swears_dict, f, ensure_ascii=False, indent=2)
+
+
+swear_data = load_swears()
+SWEAR_WORDS = {w.lower() for w in swear_data["words"]}
 
 
 # ==============================
@@ -112,6 +141,7 @@ def set_guild_words(guild_id: int, words: list[str]):
 # ==============================
 
 def count_swears(text: str, swear_words: set[str]) -> int:
+    """Return number of swear words in text."""
     text = text.lower()
     text = re.sub(r"[^0-9a-zA-Zа-яА-ЯёЁ]+", " ", text)
     words = text.split()
@@ -137,7 +167,7 @@ async def on_ready():
 
 
 # ==============================
-# 7. Message listener (per guild)
+# 7. Message listener
 # ==============================
 
 @bot.event
@@ -148,9 +178,8 @@ async def on_message(message: discord.Message):
 
     guild_id = message.guild.id
     guild_stats = get_guild_stats(guild_id)
-    guild_swears = get_guild_words(guild_id)
 
-    swear_count = count_swears(message.content, guild_swears)
+    swear_count = count_swears(message.content, SWEAR_WORDS)
 
     if swear_count > 0:
         user_id = str(message.author.id)
@@ -164,7 +193,6 @@ async def on_message(message: discord.Message):
         guild_stats["users"][user_id]["count"] += swear_count
         guild_stats["total"] += swear_count
 
-        # Save stats
         save_json(STATS_FILE, stats_data)
 
         try:
@@ -187,82 +215,115 @@ async def slash_help(interaction: discord.Interaction):
         color=0x4A90E2
     )
 
-    embed.add_field(name="/help", value="Show this help menu.", inline=False)
-    embed.add_field(name="!swearme", value="Show how many swears you said.", inline=False)
-    embed.add_field(name="!sweartop", value="Show top users by swears on this server.", inline=False)
-    embed.add_field(name="!sweartotal", value="Show total swears on this server.", inline=False)
-    embed.add_field(name="/addswear <word>", value="Add a swear word to this server (admin only).", inline=False)
-    embed.add_field(name="/removeswear <word>", value="Remove a swear word on this server (admin only).", inline=False)
-    embed.add_field(name="/listswears", value="Show all tracked swear words on this server.", inline=False)
+    embed.add_field(
+        name="/help",
+        value="Show this help menu.",
+        inline=False
+    )
+    embed.add_field(
+        name="!swearme",
+        value="Show how many swears you said on this server.",
+        inline=False
+    )
+    embed.add_field(
+        name="!sweartop",
+        value="Show top users by swears on this server.",
+        inline=False
+    )
+    embed.add_field(
+        name="!sweartotal",
+        value="Show total number of swears on this server.",
+        inline=False
+    )
+    embed.add_field(
+        name="/addswear <word>",
+        value="Add a swear word to the global list (admin only).",
+        inline=False
+    )
+    embed.add_field(
+        name="/removeswear <word>",
+        value="Remove a swear word from the global list (admin only).",
+        inline=False
+    )
+    embed.add_field(
+        name="/listswears",
+        value="Show all globally tracked swear words.",
+        inline=False
+    )
 
-    embed.set_footer(text="SwearJarCove — tracks both Russian and English swear words per server 🙂")
+    embed.set_footer(
+        text="SwearJarCove — tracks both Russian and English swear words (global word list, per-server stats) 🙂"
+    )
 
     await interaction.response.send_message(embed=embed)
 
 
 # ==============================
-# 9. Slash commands: manage swear words per server
+# 9. Slash commands: manage global swear list
 # ==============================
 
-@bot.tree.command(name="addswear", description="Add a swear word for this server (admin only)")
+@bot.tree.command(name="addswear", description="Add a swear word (admin only, global)")
 async def add_swear(interaction: discord.Interaction, word: str):
-    if interaction.guild is None:
-        return await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
-
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Only server admins can use this command.", ephemeral=True)
+        return await interaction.response.send_message(
+            "❌ Only admins can use this command.",
+            ephemeral=True
+        )
 
-    guild_id = interaction.guild.id
-    guild_words = list(get_guild_words(guild_id))
-    lower_set = {w.lower() for w in guild_words}
+    global SWEAR_WORDS, swear_data
+
     w = word.lower()
+    if w in SWEAR_WORDS:
+        return await interaction.response.send_message(
+            f"⚠️ `{word}` is already in the global swear list."
+        )
 
-    if w in lower_set:
-        return await interaction.response.send_message(f"⚠️ `{word}` is already in the swear list for this server.")
+    SWEAR_WORDS.add(w)
+    swear_data["words"].append(w)
+    save_swears(swear_data)
 
-    guild_words.append(w)
-    set_guild_words(guild_id, guild_words)
+    await interaction.response.send_message(
+        f"✅ Added global swear word: **{word}**"
+    )
 
-    await interaction.response.send_message(f"✅ Added swear word for this server: **{word}**")
 
-
-@bot.tree.command(name="removeswear", description="Remove a swear word for this server (admin only)")
+@bot.tree.command(name="removeswear", description="Remove a swear word (admin only, global)")
 async def remove_swear(interaction: discord.Interaction, word: str):
-    if interaction.guild is None:
-        return await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
-
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Only server admins can use this command.", ephemeral=True)
+        return await interaction.response.send_message(
+            "❌ Only admins can use this command.",
+            ephemeral=True
+        )
 
-    guild_id = interaction.guild.id
-    guild_words = list(get_guild_words(guild_id))
-    lower_set = {w.lower() for w in guild_words}
+    global SWEAR_WORDS, swear_data
+
     w = word.lower()
+    if w not in SWEAR_WORDS:
+        return await interaction.response.send_message(
+            f"⚠️ `{word}` is not in the global swear list."
+        )
 
-    if w not in lower_set:
-        return await interaction.response.send_message(f"⚠️ `{word}` is not in the swear list for this server.")
+    SWEAR_WORDS.remove(w)
+    swear_data["words"] = [x for x in swear_data["words"] if x.lower() != w]
+    save_swears(swear_data)
 
-    # remove by matching lower
-    new_words = [x for x in guild_words if x.lower() != w]
-    set_guild_words(guild_id, new_words)
-
-    await interaction.response.send_message(f"🗑️ Removed swear word for this server: **{word}**")
+    await interaction.response.send_message(
+        f"🗑️ Removed global swear word: **{word}**"
+    )
 
 
-@bot.tree.command(name="listswears", description="Show all swear words for this server")
+@bot.tree.command(name="listswears", description="Show all global swear words")
 async def list_swears(interaction: discord.Interaction):
-    if interaction.guild is None:
-        return await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
+    words = sorted(SWEAR_WORDS)
+    if not words:
+        return await interaction.response.send_message(
+            "No swear words configured.",
+            ephemeral=True
+        )
 
-    guild_id = interaction.guild.id
-    guild_words = sorted(get_guild_words(guild_id))
-
-    if not guild_words:
-        return await interaction.response.send_message("No swear words configured for this server.")
-
-    text = ", ".join(guild_words)
+    text = ", ".join(words)
     embed = discord.Embed(
-        title="📝 Tracked swear words for this server",
+        title="📝 Global tracked swear words",
         description=text,
         color=0xFFD166
     )
@@ -270,7 +331,7 @@ async def list_swears(interaction: discord.Interaction):
 
 
 # ==============================
-# 10. Prefix commands (per server)
+# 10. Prefix commands (per-server stats)
 # ==============================
 
 @bot.command(name="swearme")
@@ -282,10 +343,14 @@ async def swear_me(ctx: commands.Context):
     user_id = str(ctx.author.id)
 
     if user_id not in guild_stats["users"]:
-        return await ctx.send(f"{ctx.author.mention}, you haven't said any swear words on this server yet 😇")
+        return await ctx.send(
+            f"{ctx.author.mention}, you haven't said any swear words on this server yet 😇"
+        )
 
     count = guild_stats["users"][user_id]["count"]
-    await ctx.send(f"{ctx.author.mention}, you said **{count}** swear words on this server.")
+    await ctx.send(
+        f"{ctx.author.mention}, you said **{count}** swear words on this server."
+    )
 
 
 @bot.command(name="sweartop")
@@ -299,9 +364,13 @@ async def swear_top(ctx: commands.Context, limit: int = 10):
     if not users:
         return await ctx.send("Nobody has used swear words on this server yet 🤔")
 
-    sorted_users = sorted(users.items(), key=lambda x: x[1]["count"], reverse=True)[:limit]
-    lines = []
+    sorted_users = sorted(
+        users.items(),
+        key=lambda x: x[1]["count"],
+        reverse=True
+    )[:limit]
 
+    lines = []
     for i, (uid, info) in enumerate(sorted_users, start=1):
         member = ctx.guild.get_member(int(uid))
         name = member.display_name if member else info["name"]
@@ -317,7 +386,9 @@ async def swear_total(ctx: commands.Context):
 
     guild_stats = get_guild_stats(ctx.guild.id)
     total = guild_stats["total"]
-    await ctx.send(f"Total swear words on this server: **{total}**")
+    await ctx.send(
+        f"Total swear words on this server: **{total}**"
+    )
 
 
 # ==============================
