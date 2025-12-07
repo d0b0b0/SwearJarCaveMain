@@ -197,7 +197,7 @@ async def on_message(message: discord.Message):
         save_json(STATS_FILE, stats_data)
 
         try:
-            await message.add_reaction("<:Donald_Trump_official_portrait:1447172263395987496>")
+            await message.add_reaction("<:Donald_Trump_official_portrait:1447173750205186149>")
         except Exception:
             pass
 
