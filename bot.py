@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import io
 
 import discord
 from discord.ext import commands
@@ -446,6 +447,60 @@ async def swear_total(ctx: commands.Context):
         f"Total swear words on this server: **{total}**"
     )
 
+# ===== SEND swear_words.json =====
+
+@bot.command(name="export_swears")
+@commands.is_owner()
+async def export_swears(ctx):
+    try:
+        with open("swear_words.json", "r", encoding="utf-8") as f:
+            data = f.read()
+
+        await ctx.send(
+            "📤 Exported **swear_words.json**",
+            file=discord.File(io.BytesIO(data.encode("utf-8")), filename="swear_words.json")
+        )
+    except Exception as e:
+        await ctx.send(f"❌ Error exporting swear_words.json:\n```{e}```")
+
+
+# ===== SEND swear_stats.json =====
+
+@bot.command(name="export_stats")
+@commands.is_owner()
+async def export_stats(ctx):
+    try:
+        with open("swear_stats.json", "r", encoding="utf-8") as f:
+            data = f.read()
+
+        await ctx.send(
+            "📤 Exported **swear_stats.json**",
+            file=discord.File(io.BytesIO(data.encode("utf-8")), filename="swear_stats.json")
+        )
+    except Exception as e:
+        await ctx.send(f"❌ Error exporting swear_stats.json:\n```{e}```")
+
+
+# ===== SEND BOTH FILES =====
+
+@bot.command(name="export_all")
+@commands.is_owner()
+async def export_all(ctx):
+    try:
+        with open("swear_words.json", "r", encoding="utf-8") as f1:
+            words = f1.read()
+        with open("swear_stats.json", "r", encoding="utf-8") as f2:
+            stats = f2.read()
+
+        files = [
+            discord.File(io.BytesIO(words.encode("utf-8")), filename="swear_words.json"),
+            discord.File(io.BytesIO(stats.encode("utf-8")), filename="swear_stats.json")
+        ]
+
+        await ctx.send("📤 Exported **both files**:", files=files)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error exporting files:\n```{e}```")
 
 # ==============================
 # 11. Run bot
